@@ -43,11 +43,36 @@ def train_one_epoch(model, dataloader, loss_fn, optimizer, device):
     return avg_loss, avg_acc
 
 
+# def evaluate(model, dataloader, loss_fn, device):
+#     model.eval()
+#     running_loss = 0.0
+#     running_correct = 0
+#     total = 0
+
+#     with torch.no_grad():
+#         for images, labels in tqdm(dataloader, desc="Evaluating", leave=False):
+#             images, labels = images.to(device), labels.to(device)
+
+#             outputs = model(images)
+#             loss = loss_fn(outputs, labels)
+
+#             running_loss += loss.item() * labels.size(0)
+#             _, preds = outputs.max(1)
+#             running_correct += preds.eq(labels).sum().item()
+#             total += labels.size(0)
+
+#     avg_loss = running_loss / total
+#     avg_acc = running_correct / total
+#     return avg_loss, avg_acc
+
 def evaluate(model, dataloader, loss_fn, device):
     model.eval()
     running_loss = 0.0
     running_correct = 0
     total = 0
+
+    all_preds = []
+    all_labels = []
 
     with torch.no_grad():
         for images, labels in tqdm(dataloader, desc="Evaluating", leave=False):
@@ -57,13 +82,33 @@ def evaluate(model, dataloader, loss_fn, device):
             loss = loss_fn(outputs, labels)
 
             running_loss += loss.item() * labels.size(0)
+
             _, preds = outputs.max(1)
             running_correct += preds.eq(labels).sum().item()
             total += labels.size(0)
 
+            all_preds.append(preds)
+            all_labels.append(labels)
+
     avg_loss = running_loss / total
     avg_acc = running_correct / total
-    return avg_loss, avg_acc
+
+    all_preds = torch.cat(all_preds)
+    all_labels = torch.cat(all_labels)
+
+    # micro-average 계산
+    TP = (all_preds == all_labels).sum().item()
+
+    # multi-class는 FP, FN을 다음과 같이 정의
+    FP = (all_preds != all_labels).sum().item()
+    FN = FP  # micro에서는 FP 총합 == FN 총합
+
+    precision = TP / (TP + FP + 1e-8)
+    recall    = TP / (TP + FN + 1e-8)
+    f1_score  = 2 * precision * recall / (precision + recall + 1e-8)
+
+    return avg_loss, avg_acc, precision, recall, f1_score
+
 
 
 def training(early_stopping=True, ema_patience=5, learning_rate=1e-5, weight_decay=1e-5, max_epochs=50):
@@ -164,7 +209,7 @@ def training(early_stopping=True, ema_patience=5, learning_rate=1e-5, weight_dec
         train_acc_list.append(train_acc)
 
         if val_loader is not None:
-            valid_loss, valid_acc = evaluate(model, val_loader, loss_fn, device)
+            valid_loss, valid_acc, _, _, _ = evaluate(model, val_loader, loss_fn, device)
 
             valid_loss_list.append(valid_loss)
             valid_acc_list.append(valid_acc)
@@ -219,7 +264,7 @@ def training(early_stopping=True, ema_patience=5, learning_rate=1e-5, weight_dec
 
     # final evaluation
     model.load_state_dict(best_model_state)
-    test_loss, test_acc = evaluate(model, test_loader, loss_fn, device)
+    test_loss, test_acc, _, _, _ = evaluate(model, test_loader, loss_fn, device)
     print(f"Final Test Loss: {test_loss:.4f}, Final Test Acc: {test_acc:.4f}")
 
     with open(log_file, "a") as f:
